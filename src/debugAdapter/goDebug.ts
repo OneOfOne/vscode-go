@@ -737,6 +737,26 @@ class GoDebugSession extends DebugSession {
 		});
 	}
 
+	private updateThreads(goroutines: DebugGoroutine[]): void {
+		// Assume we need to stop all the threads we saw before...
+		let needsToBeStopped = new Set<number>();
+		this.threads.forEach(id => needsToBeStopped.add(id));
+		for (let goroutine of goroutines) {
+			// ...but delete from list of threads to stop if we still see it
+			needsToBeStopped.delete(goroutine.id);
+			if (!this.threads.has(goroutine.id)) {
+				// Send started event if it's new
+				this.sendEvent(new ThreadEvent('started', goroutine.id));
+			}
+			this.threads.add(goroutine.id);
+		}
+		// Send existed event if it's no longer there
+		needsToBeStopped.forEach(id => {
+			this.sendEvent(new ThreadEvent('exited', id));
+			this.threads.delete(id);
+		});
+	}
+
 	protected threadsRequest(response: DebugProtocol.ThreadsResponse): void {
 		if (this.continueRequestRunning) {
 			// Thread request to delve is syncronous and will block if a previous async continue request didn't return
@@ -758,6 +778,7 @@ class GoDebugSession extends DebugSession {
 			}
 			const goroutines = this.delve.isApiV1 ? <DebugGoroutine[]>out : (<ListGoroutinesOut>out).Goroutines;
 			verbose('goroutines', goroutines);
+			this.updateThreads(goroutines);
 			let threads = goroutines.map(goroutine =>
 				new Thread(
 					goroutine.id,
@@ -1035,23 +1056,7 @@ class GoDebugSession extends DebugSession {
 					logError('Failed to get threads - ' + err.toString());
 				}
 				const goroutines = this.delve.isApiV1 ? <DebugGoroutine[]>out : (<ListGoroutinesOut>out).Goroutines;
-				// Assume we need to stop all the threads we saw before...
-				let needsToBeStopped = new Set<number>();
-				this.threads.forEach(id => needsToBeStopped.add(id));
-				for (let goroutine of goroutines) {
-					// ...but delete from list of threads to stop if we still see it
-					needsToBeStopped.delete(goroutine.id);
-					if (!this.threads.has(goroutine.id)) {
-						// Send started event if it's new
-						this.sendEvent(new ThreadEvent('started', goroutine.id));
-					}
-					this.threads.add(goroutine.id);
-				}
-				// Send existed event if it's no longer there
-				needsToBeStopped.forEach(id => {
-					this.sendEvent(new ThreadEvent('exited', id));
-					this.threads.delete(id);
-				});
+				this.updateThreads(goroutines);
 
 				let stoppedEvent = new StoppedEvent(reason, this.debugState.currentGoroutine.id);
 				(<any>stoppedEvent.body).allThreadsStopped = true;
